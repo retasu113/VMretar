@@ -1,4 +1,4 @@
-# MyVM — Swift Playgrounds 向け VM 管理アプリ（エンジン未接続版）
+# VMretar — Swift Playgrounds 向け VM 管理アプリ（エンジン未接続版）
 
 確認日: 2026-11-05
 
