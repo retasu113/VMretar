@@ -1,4 +1,4 @@
-# SwiftVMKit — Swift Playgrounds向けRV32エミュレーター試作
+# VMretar — Swift Playgrounds向けRV32エミュレーター試作
 
 確認日: 2026-11-06
 
