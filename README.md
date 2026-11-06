@@ -1,142 +1,84 @@
-# VMretar — Swift Playgrounds向けRV32エミュレーター試作
+# VMretar — Swift Playgrounds 向け VM アプリ（自作 RISC-V エンジン付き）
 
 確認日: 2026-11-06
 
-## この成果物でできること
+## 何ができるか（正直な説明）
 
-- 既存のSwiftUI VM設定画面を補完するモデル・VMStore・一覧画面
-- 元の画面構成・配色・ボタン配置を維持。RV32実行画面への入口は既存「機能一覧」>「ツール」に追加
-- VMごとのJSON設定保存、RAWスパースディスク作成、ISO/IMG/QCOW2の取り込み（既存実装）
-- RV32IMAインタープリター（既存 `RV32Machine.swift`）を実行ループへ接続
-- ELF32 little-endian / EM_RISCV の PT_LOAD セグメントをRAMへロード
-- UART出力を既存TerminalFramebufferへ転送
-- Pause / Resume / Force Stop
-- ソフトウェア・ハードウェアキーボード入力経路
+- **RISC-V 32bit（RV32IMA）の「MMU なし Linux」を、純 Swift のインタープリタで起動する設計です。**
+  JIT・C/C++ ライブラリ・特別な権限は不要で、Swift Playgrounds だけで動く構成にしてあります。
+- **このコードは私の環境でコンパイルも実機起動もできていません。** 起動確認は未実施です。
+  エラーや、起動途中で止まる場合は、画面のスクリーンショットや表示内容を送ってください。
+- 画面はシリアルコンソール（80×30 の端末）です。グラフィックスやマウスはありません。
+- ゲストは RAM（initramfs）上で動くので、**再起動すると内容は消えます**（ディスクデバイスなし）。
+- Windows・MMU 付き Linux・x86・ARM64 は動きません（理由は「機能一覧」画面にも表示）。
 
-## 重要：これはUTM相当の完成VMではない
+## 設計（参考: mini-rv32ima）
 
-本試作はRISC-VのベアメタルELFを実行するCPUエミュレーターです。
-Linuxディストリビューション、Windows、一般的なISOインストーラーを起動できる完成システムエミュレーターではありません。
+mini-rv32ima は RV32IMA + Zifencei + Zicsr の小型エミュレータで、MMU なしの Linux を起動できると公開されています。
+同じメモリマップを Swift で再実装しました。
 
-現状のRV32MachineはM/U特権レベル、MMUなし、RAM、UART、CLINT、SYSCONを中心とした最小マシンです。
-S-mode、Sv32、PLIC、VirtIO block/net、PCI、OpenSBIの実装が不足しているため、通常のRISC-V Linuxを起動するためのハードウェア環境がありません。
-また、ISOは取り込み・保管のみで、仮想CD-ROMとしてゲストへ接続されません。RAWディスクも現時点ではゲストCPUからアクセスできません。
+| 領域 | アドレス |
+|---|---|
+| RAM | 0x8000_0000〜（Image を先頭に配置、DTB は末尾） |
+| UART（8250 風） | 0x1000_0000（LSR は 0x1000_0005） |
+| CLINT | msip 0x1100_0000 / mtimecmp 0x1100_4000 / mtime 0x1100_BFF8 |
+| SYSCON | 0x1110_0000（0x5555 = 電源オフ, 0x7777 = 再起動） |
 
-## 実行条件
+- CPU: M / U モード、割り込み（タイマー・ソフトウェア）、RV32M、RV32A（単一ハート）
+- 未実装: C 拡張（圧縮命令）、S モード、MMU(Sv32)、PMP、浮動小数点
+- DTB は Swift で生成（FDTBuilder.swift）。ブート引数: `earlycon=uart8250,mmio,0x10000000 console=ttyS0`
+- タイマーは 1 MHz（DTB の timebase-frequency と一致）
 
-- iPadOSのSwift Playgrounds App Playgroundを想定
-- UIKit / SwiftUI / Foundation / CryptoKit / Networkを利用
-- 全ファイルを同じApp Playgroundのソースに追加
-- `MyApp.swift`をApp entry pointとして使用
-- このソース一式はiOS/iPadOS向けUIKit実装です。macOSネイティブアプリとしてはそのままビルドできません。
-- `RV32Machine.swift`はFoundationだけで型チェックできることをLinux上のSwift 6.2.1で確認しています。ただしSwiftUI/UIKitを含む全アプリのiPadOS実機ビルド・実行はこの環境では実施していません。
+## 追加・変更されたファイル
 
-## ファイル構成
+| ファイル | 役割 |
+|---|---|
+| RV32Machine.swift | CPU・メモリ・CLINT・UART・SYSCON（新規） |
+| FDTBuilder.swift | デバイスツリー生成（新規） |
+| TerminalEmulator.swift | 端末画面と描画（新規） |
+| RV32Backend.swift | VirtualizationBackend 実装（新規） |
+| VMConfiguration.swift | `riscv32` を追加、既定を RISC-V 32 / 64MB に |
+| VMStore.swift | riscv32 の VM に RV32Backend を使う |
+| FramebufferView.swift | ハードウェアキーボード対応を改善 |
+| CreateVMView.swift / CapabilityView.swift | 説明文の更新 |
 
-### 既存ファイル
-- `MyApp.swift`
-- `CapabilityView.swift`
-- `CreateVMView.swift`
-- `ExportPicker.swift`
-- `FDTBuilder.swift`
-- `FramebufferView.swift`
-- `ImageManager.swift`
-- `NetworkManager.swift`
-- `NetworkToolsView.swift`
-- `RV32Machine.swift`
-- `StorageManager.swift`
-- `TerminalEmulator.swift`
+既存ファイル（VMDetailView.swift など）は変更なしです。上の変更ファイルを置き換えてください。
 
-### 追加ファイル
-- `VMCore.swift`: モデル、VMStore、一覧UI、容量表示
-- `FramebufferSource.swift`: フレームバッファと入力の共通プロトコル
-- `RV32ELFLoader.swift`: ELF32/RISC-V PT_LOADローダー
-- `RV32ExecutionController.swift`: CPU実行ループと状態制御
-- `RV32RunnerView.swift`: ELF選択・実行UI
+## 使い方
 
-## Swift Playgroundsへの追加
+1. iPad の Safari で次の URL を開いてダウンロードします。
+   `https://github.com/cnlohr/mini-rv32ima-images/raw/master/images/linux-6.1.14-rv32nommu-cnl-1.zip`
+   （約 1.4 MB。mini-rv32ima 公式のビルド済み Image。確認日 2026-11-05）
+2. 「ファイル」アプリで zip をタップして展開すると `Image` が出てきます。
+3. アプリで「＋ → 新規 VM」。CPU は **RISC-V 32**、メモリ **64 MB**（既定）で作成。
+   作成時に ISO / IMG として `Image` を選んでも、あとで詳細画面から取り込んでも構いません。
+4. VM 詳細 →「起動」。実行画面にカーネルのログが流れ、シェルが出れば成功です。
+5. キーボード（画面右上のキーボードボタン、またはハードウェアキーボード）で入力。
+   終了はゲスト内で `poweroff`（VM が Stopped になります）。応答しないときは強制停止。
 
-1. 新しい「App」プロジェクトを作成する。
-2. ZIPを展開し、SwiftVMKit内のすべての `.swift` ファイルをApp Playgroundへ追加する。
-3. 既存の `ContentView.swift` が `@main` を持つ場合は削除するか、`MyApp.swift`との二重エントリーポイントを解消する。
-4. iPadOS向けに実行する。
-5. VM一覧の情報ボタンから「機能一覧」を開き、「ツール」>「RV32 ELF エミュレーター」を選択する。
-6. RISC-V 32-bit / little-endian / ELF形式のベアメタルプログラムを選択する。
+## 動作確認チェックリスト
 
-## ELFの前提
+1. 起動 → 数秒〜数十秒でログが流れる（速度は端末と最適化設定による）
+2. `Linux version 6.1...` などのカーネルログが出る
+3. シェルのプロンプトが出る → `ls`、`uname -a` が動く
+4. 一時停止 → 再開で続きから動く
+5. `poweroff` で Stopped になる
+6. 強制停止 → 再度起動できる
 
-- ELFCLASS32
-- ELFDATA2LSB
-- e_machine = EM_RISCV (243)
-- PT_LOADセグメントが `0x80000000` から始まるゲストRAM範囲内
-- エントリーポイントはRAM範囲内かつ4バイト境界
-- 命令セットは既存RV32Machineが実装するRV32IMA + Zicsr + Zifenceiの範囲
+## 起動しないとき（原因の候補）
 
-Linux向けELFやMMU前提のユーザーランド実行を保証しません。ベアメタルのUART出力を使うテストファームウェアで確認してください。
+| 症状 | 考えられる原因 / 対処 |
+|---|---|
+| 「カーネルイメージが未設定」 | 詳細の「ISO / IMG を取り込む」で Image を選ぶ |
+| 「ELF 形式は未対応」 | zip を展開した `Image`（フラットバイナリ）を使う |
+| 画面が真っ黒のまま | 数十秒待つ。変化がなければ、画面の状態を教えてください（命令の未対応や DTB の不一致が疑われます） |
+| 極端に遅い | Playgrounds のビルド設定が最適化されていない可能性。メモリを 64 MB 以下にして試す |
+| 途中で止まる | 未実装の命令・CSR に当たった可能性。最後に出たログを教えてください |
+| 文字化け | ASCII 以外は '?' 表示になります（仕様） |
 
-## 既知の制約・未実装
+## 出典
 
-- ISOブート / CD-ROMデバイス
-- Linux用S-mode / Sv32 MMU / PLIC / OpenSBI
-- 仮想ディスクのブロックデバイス接続
-- ゲストNAT / DHCP / DNS / ポートフォワード
-- ゲストとホストの共有フォルダ
-- x86 / x86_64 / ARM64 / RV64
-- グラフィカルディスプレイ / GPU / USB / サウンド
-- RAM状態を含むスナップショット
-- ゲストの自動再起動（SYSCON rebootは検出して停止表示）
-- macOS向けVirtualization.frameworkバックエンド
-
-## 追加実装の推奨順
-
-1. RV32 privileged architectureのS-mode、例外委譲、Sv32 MMU
-2. PLICと割り込み配線
-3. VirtIO-mmio transport
-4. VirtIO block + RAWディスク接続
-5. OpenSBI相当のブートファームウェア、RISC-V Linux `virt`互換DTB
-6. VirtIO console / input / GPU
-7. VirtIO net + NAT backend
-8. ELF/Kernel/Initrd/DTBの正式なブート構成
-9. macOSでは別バックエンドとしてVirtualization.frameworkを追加
-
-## 技術調査（公式・一次資料）
-
-- Apple Virtualization framework:
-  https://developer.apple.com/documentation/virtualization
-- Apple Hypervisor framework:
-  https://developer.apple.com/documentation/hypervisor
-- Apple Swift Playgrounds:
-  https://developer.apple.com/swift-playground/
-- Swift PlaygroundsへのSwiftファイル追加:
-  https://support.apple.com/guide/playgrounds-ipad/add-swift-files-images-and-swift-packages-itc18b7bce9d/ipados
-- Swift Playgrounds Swift Package:
-  https://developer.apple.com/documentation/swift-playgrounds/add-a-swift-package
-- UTM architecture:
-  https://github.com/utmapp/UTM/blob/main/Documentation/Architecture.md
-- UTM source / license notes:
-  https://github.com/utmapp/UTM
-- UTM iOS install / UTM SE:
-  https://docs.getutm.app/installation/ios/
-- QEMU system emulation:
-  https://www.qemu.org/docs/master/system/
-- QEMU RISC-V system emulation:
-  https://www.qemu.org/docs/master/system/target-riscv.html
-- QEMU RISC-V virt machine:
-  https://www.qemu.org/docs/master/system/riscv/virt.html
-- QEMU license:
-  https://github.com/qemu/qemu/blob/master/LICENSE
-- Apple App Review Guidelines:
-  https://developer.apple.com/app-store/review/guidelines/
-
-## 技術選定上の結論
-
-- iPadOS: JITを使わないSwiftインタープリターが安全で実装可能な出発点。速度は低い。
-- macOS: LinuxゲストならVirtualization.frameworkが第一候補。異種CPUエミュレーションや多数のデバイスが必要ならQEMU TCG。
-- Hypervisor.framework: macOS上でホストと同じCPUアーキテクチャの仮想化を加速する用途。異種CPUの命令エミュレーションではない。
-- WebAssembly: サンドボックス内で既存エミュレーターを動かす代替案にはなるが、JIT制約、ファイルI/O、ネットワーク、パフォーマンス、WASMランタイム自体の統合が必要で、今回の自作Swift CPUより単純ではない。
-
-## ライセンス
-
-この成果物の追加コードは独自実装として提供します。元のアップロードファイルに含まれる著作権・ライセンス表示がある場合は保持してください。
-QEMUは全体としてGPLv2を中心とするライセンス構成で、ファイルごとの例外・依存ライブラリの条件があります。QEMUコードを移植・リンク・再配布する場合は、単純に「UTMがApache-2.0だから全体もApache-2.0」と判断してはいけません。
-ゲストOSのISOやファームウェアはユーザーが正規の配布元から取得し、ライセンス条件に従ってください。
+- mini-rv32ima（Charles Lohr）: https://github.com/cnlohr/mini-rv32ima/
+  RV32IMA/Zifencei/Zicsr と CLINT・MMIO を実装し、MMU なしの RV32 Linux を起動。MIT ライセンス。
+  本アプリは同プロジェクトの仕様を参考に Swift で独自実装したもので、コードの転用はしていません。
+- ビルド済み Image: https://github.com/cnlohr/mini-rv32ima-images （再配布条件は各リポジトリを確認してください。アプリには同梱していません）
